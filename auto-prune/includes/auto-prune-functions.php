@@ -18,13 +18,24 @@ if ( ! defined( 'AUTO_PRUNE_OPTION_EXPIRY_DAYS' ) ) {
 	define( 'AUTO_PRUNE_OPTION_EXPIRY_DAYS', 'auto_prune_expiry_days' );
 }
 
+if ( ! defined( 'AUTO_PRUNE_OPTION_EXPIRY_MODE' ) ) {
+	define( 'AUTO_PRUNE_OPTION_EXPIRY_MODE', 'auto_prune_expiry_mode' );
+}
+
+if ( ! defined( 'AUTO_PRUNE_OPTION_EXPIRY_VALUE' ) ) {
+	define( 'AUTO_PRUNE_OPTION_EXPIRY_VALUE', 'auto_prune_expiry_value' );
+}
+
 if ( ! defined( 'AUTO_PRUNE_OPTION_CRON_TOKEN' ) ) {
 	define( 'AUTO_PRUNE_OPTION_CRON_TOKEN', 'auto_prune_cron_token' );
 }
 
-if ( ! defined( 'AUTO_PRUNE_CRON_SCHEDULE' ) ) {
-	// Run once per day.
-	define( 'AUTO_PRUNE_CRON_SCHEDULE', '0 3 * * *' );
+if ( ! defined( 'AUTO_PRUNE_OPTION_CRON_HOUR' ) ) {
+	define( 'AUTO_PRUNE_OPTION_CRON_HOUR', 'auto_prune_cron_hour' );
+}
+
+if ( ! defined( 'AUTO_PRUNE_OPTION_CRON_MINUTE' ) ) {
+	define( 'AUTO_PRUNE_OPTION_CRON_MINUTE', 'auto_prune_cron_minute' );
 }
 
 if ( ! defined( 'AUTO_PRUNE_CRON_MARKER' ) ) {
@@ -36,19 +47,95 @@ if ( ! defined( 'AUTO_PRUNE_DEFAULT_EXPIRY_DAYS' ) ) {
 	define( 'AUTO_PRUNE_DEFAULT_EXPIRY_DAYS', 14 );
 }
 
+if ( ! defined( 'AUTO_PRUNE_DEFAULT_EXPIRY_MODE' ) ) {
+	define( 'AUTO_PRUNE_DEFAULT_EXPIRY_MODE', 'days' );
+}
+
+if ( ! defined( 'AUTO_PRUNE_DEFAULT_CRON_HOUR' ) ) {
+	define( 'AUTO_PRUNE_DEFAULT_CRON_HOUR', 3 );
+}
+
+if ( ! defined( 'AUTO_PRUNE_DEFAULT_CRON_MINUTE' ) ) {
+	define( 'AUTO_PRUNE_DEFAULT_CRON_MINUTE', 0 );
+}
+
+if ( ! defined( 'AUTO_PRUNE_EXPIRY_MODE_DAYS' ) ) {
+	define( 'AUTO_PRUNE_EXPIRY_MODE_DAYS', 'days' );
+}
+
+if ( ! defined( 'AUTO_PRUNE_EXPIRY_MODE_MINUTES' ) ) {
+	define( 'AUTO_PRUNE_EXPIRY_MODE_MINUTES', 'minutes' );
+}
+
 /**
- * Return a sanitized expiry days integer.
+ * Return the configured expiry mode ('days' or 'minutes').
  */
-function auto_prune_get_expiry_days() {
-	$days = (int) yourls_get_option( AUTO_PRUNE_OPTION_EXPIRY_DAYS, AUTO_PRUNE_DEFAULT_EXPIRY_DAYS );
-	if ( $days < 1 ) {
-		$days = AUTO_PRUNE_DEFAULT_EXPIRY_DAYS;
+function auto_prune_get_expiry_mode() {
+	$mode = (string) yourls_get_option( AUTO_PRUNE_OPTION_EXPIRY_MODE, AUTO_PRUNE_DEFAULT_EXPIRY_MODE );
+	$mode = strtolower( trim( $mode ) );
+	if ( $mode !== AUTO_PRUNE_EXPIRY_MODE_DAYS && $mode !== AUTO_PRUNE_EXPIRY_MODE_MINUTES ) {
+		$mode = AUTO_PRUNE_DEFAULT_EXPIRY_MODE;
 	}
-	return $days;
+	return $mode;
+}
+
+/**
+ * Return the configured expiry value (days or minutes depending on expiry mode).
+ *
+ * Backward compatibility: if expiry_value isn't set yet, fall back to the legacy expiry_days option.
+ */
+function auto_prune_get_expiry_value() {
+	$mode = auto_prune_get_expiry_mode();
+
+	$val = (int) yourls_get_option( AUTO_PRUNE_OPTION_EXPIRY_VALUE, 0 );
+	if ( $val >= 1 ) {
+		return $val;
+	}
+
+	// Legacy fallback.
+	$legacy_days = (int) yourls_get_option( AUTO_PRUNE_OPTION_EXPIRY_DAYS, AUTO_PRUNE_DEFAULT_EXPIRY_DAYS );
+	if ( $legacy_days < 1 ) {
+		$legacy_days = AUTO_PRUNE_DEFAULT_EXPIRY_DAYS;
+	}
+
+	if ( $mode === AUTO_PRUNE_EXPIRY_MODE_DAYS ) {
+		return $legacy_days;
+	}
+
+	return $legacy_days * 1440; // Convert days -> minutes.
 }
 
 function auto_prune_get_cron_script_path() {
 	return YOURLS_ABSPATH . '/user/plugins/' . AUTO_PRUNE_PLUGIN_SLUG . '/cron.php';
+}
+
+function auto_prune_get_cron_hour() {
+	$hour = (int) yourls_get_option( AUTO_PRUNE_OPTION_CRON_HOUR, AUTO_PRUNE_DEFAULT_CRON_HOUR );
+	if ( $hour < 0 || $hour > 23 ) {
+		$hour = AUTO_PRUNE_DEFAULT_CRON_HOUR;
+	}
+	return $hour;
+}
+
+function auto_prune_get_cron_minute() {
+	$minute = (int) yourls_get_option( AUTO_PRUNE_OPTION_CRON_MINUTE, AUTO_PRUNE_DEFAULT_CRON_MINUTE );
+	if ( $minute < 0 || $minute > 59 ) {
+		$minute = AUTO_PRUNE_DEFAULT_CRON_MINUTE;
+	}
+	return $minute;
+}
+
+function auto_prune_get_cron_schedule() {
+	// Daily at the configured HH:MM.
+	$minute = auto_prune_get_cron_minute();
+	$hour = auto_prune_get_cron_hour();
+	return $minute . ' ' . $hour . ' * * *';
+}
+
+function auto_prune_get_cron_time_hm() {
+	$hour = auto_prune_get_cron_hour();
+	$minute = auto_prune_get_cron_minute();
+	return sprintf( '%02d:%02d', $hour, $minute );
 }
 
 /**
@@ -142,12 +229,14 @@ function auto_prune_install_cronjob() {
 		return false;
 	}
 
-	$php = defined( 'PHP_BINARY' ) && PHP_BINARY ? PHP_BINARY : 'php';
+	// Always use PHP CLI. In many web contexts PHP_BINARY points to php-fpm, which is not valid for cron.
+	$php = 'php';
 	$token = auto_prune_get_cron_token();
 	$cron_script = auto_prune_get_cron_script_path();
 
 	$cmd = escapeshellarg( $php ) . ' -q ' . escapeshellarg( $cron_script ) . ' --token=' . escapeshellarg( $token );
-	$line = AUTO_PRUNE_CRON_SCHEDULE . ' ' . $cmd . ' # ' . AUTO_PRUNE_CRON_MARKER;
+	$schedule = auto_prune_get_cron_schedule();
+	$line = $schedule . ' ' . $cmd . ' # ' . AUTO_PRUNE_CRON_MARKER;
 
 	$current = auto_prune_get_crontab_contents();
 	$lines = $current === '' ? array() : preg_split( '/\r\n|\r|\n/', $current );
@@ -198,12 +287,26 @@ function auto_prune_uninstall_cronjob() {
  * @return int Number of rows deleted (best effort).
  */
 function auto_prune_run_prune( $days = null ) {
-	$days = $days === null ? auto_prune_get_expiry_days() : (int) $days;
-	if ( $days < 1 ) {
-		$days = AUTO_PRUNE_DEFAULT_EXPIRY_DAYS;
+	$mode = auto_prune_get_expiry_mode();
+	$value = auto_prune_get_expiry_value();
+
+	// Allow an optional override with the legacy "days" arg.
+	if ( $days !== null ) {
+		$mode = AUTO_PRUNE_EXPIRY_MODE_DAYS;
+		$value = (int) $days;
 	}
 
-	$threshold_ts = time() - ( $days * 86400 );
+	if ( $value < 1 ) {
+		$mode = AUTO_PRUNE_EXPIRY_MODE_DAYS;
+		$value = AUTO_PRUNE_DEFAULT_EXPIRY_DAYS;
+	}
+
+	if ( $mode === AUTO_PRUNE_EXPIRY_MODE_MINUTES ) {
+		$threshold_ts = time() - ( $value * 60 );
+	} else {
+		$threshold_ts = time() - ( $value * 86400 );
+	}
+
 	$threshold_dt = date( 'Y-m-d H:i:s', $threshold_ts );
 
 	$ydb = yourls_get_db( 'write-auto-prune' );

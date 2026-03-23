@@ -1,10 +1,16 @@
 # YOURLS-auto-prune-expired
 
-[](https://github.com/joshp23/YOURLS-Expiry#yourls-expiry)
+[![Listed in Awesome YOURLS!](https://img.shields.io/badge/Awesome-YOURLS-C5A3BE)](https://github.com/YOURLS/awesome-yourls/)
 
 [YOURLS](https://github.com/YOURLS/YOURLS)  Plugin that enables configuring expiry time and automatically removing expired links.
 
-The plugin installs a cronjob that deletes the expired links automatically.
+[](https://github.com/rijensky/YOURLS-auto-prune-expired)
+
+### FINALLY
+Auto delete your expired links.
+The plugin lets you configure link expiry time in days or minutes (default is 14 days).
+It installs a Cronjob that runs once a day (default is at 3am)
+The Cronjob removes all expired links from the database.
 
 ## Installation
 * Extract the  `auto-prune`  folder from this repo, and place it at  `user/plugins/auto-prune`
